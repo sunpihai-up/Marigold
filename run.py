@@ -183,11 +183,25 @@ if "__main__" == __name__:
     logging.info(f"device = {device}")
 
     # -------------------- Data --------------------
-    rgb_filename_list = glob(os.path.join(input_rgb_dir, "*"))
-    rgb_filename_list = [
-        f for f in rgb_filename_list if os.path.splitext(f)[1].lower() in EXTENSION_LIST
-    ]
-    rgb_filename_list = sorted(rgb_filename_list)
+    if input_rgb_dir[-3:] == 'txt':
+        # Get rgb path from split file
+        assert os.path.isfile(input_rgb_dir), f"{input_rgb_dir} is not a valid file path"
+        rgb_filename_list = []
+        with open(input_rgb_dir, 'r') as f:
+            for line in f:
+                line = line.rstrip()
+                if not os.path.isfile(line):
+                    print(f"{line} is missed!")
+                else:
+                    rgb_filename_list.append(line)
+    else:
+        # Get rgb path from rgb dict
+        rgb_filename_list = glob(os.path.join(input_rgb_dir, "*"))
+        rgb_filename_list = [
+            f for f in rgb_filename_list if os.path.splitext(f)[1].lower() in EXTENSION_LIST
+        ]
+        rgb_filename_list = sorted(rgb_filename_list)
+                
     n_images = len(rgb_filename_list)
     if n_images > 0:
         logging.info(f"Found {n_images} images")
@@ -243,7 +257,8 @@ if "__main__" == __name__:
             depth_colored: Image.Image = pipe_out.depth_colored
 
             # Save as npy
-            rgb_name_base = os.path.splitext(os.path.basename(rgb_path))[0]
+            dir_name = rgb_path.split('/')[5]
+            rgb_name_base = dir_name + '_' + os.path.splitext(os.path.basename(rgb_path))[0]
             pred_name_base = rgb_name_base + "_pred"
             npy_save_path = os.path.join(output_dir_npy, f"{pred_name_base}.npy")
             if os.path.exists(npy_save_path):
