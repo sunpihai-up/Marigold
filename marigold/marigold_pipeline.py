@@ -38,7 +38,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from .util.batchsize import find_batch_size
-from .util.ensemble import ensemble_depths
+from .util.ensemble import ensemble_depths, ensemble_variance_heat_maps
 from .util.image_util import (
     chw2hwc,
     colorize_depth_maps,
@@ -62,6 +62,8 @@ class MarigoldDepthOutput(BaseOutput):
 
     depth_np: np.ndarray
     depth_colored: Union[None, Image.Image]
+    variance_heat_map: Union[None, np.ndarray]
+    variance_heat_colored: Union[None, Image.Image]
     uncertainty: Union[None, np.ndarray]
 
 
@@ -196,7 +198,7 @@ class MarigoldPipeline(DiffusionPipeline):
         assert rgb_norm.min() >= -1.0 and rgb_norm.max() <= 1.0
 
         # ----------------- Predicting depth -----------------
-        # Batch repeated input image
+        # Batch repeated input image (根据ensemble_size复制输入图像)
         duplicated_rgb = torch.stack([rgb_norm] * ensemble_size)
         single_rgb_dataset = TensorDataset(duplicated_rgb)
         if batch_size > 0:
@@ -214,6 +216,7 @@ class MarigoldPipeline(DiffusionPipeline):
 
         # Predict depth maps (batched)
         depth_pred_ls = []
+        variance_heat_map_ls = []
         if show_progress_bar:
             iterable = tqdm(
                 single_rgb_loader, desc=" " * 2 + "Inference batches", leave=False
@@ -222,14 +225,17 @@ class MarigoldPipeline(DiffusionPipeline):
             iterable = single_rgb_loader
         for batch in iterable:
             (batched_img,) = batch
-            depth_pred_raw = self.single_infer(
+            depth_pred_raw, variance_heat_map = self.single_infer(
                 rgb_in=batched_img,
                 num_inference_steps=denoising_steps,
                 show_pbar=show_progress_bar,
                 seed=seed,
             )
             depth_pred_ls.append(depth_pred_raw.detach())
+            variance_heat_map_ls.append(variance_heat_map.detach())
+        
         depth_preds = torch.concat(depth_pred_ls, dim=0).squeeze()
+        variance_heat_maps = torch.concat(variance_heat_maps, dim=0).squeeze()
         torch.cuda.empty_cache()  # clear vram cache for ensembling
 
         # ----------------- Test-time ensembling -----------------
@@ -237,8 +243,10 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_pred, pred_uncert = ensemble_depths(
                 depth_preds, **(ensemble_kwargs or {})
             )
+            variance_heat_map = ensemble_variance_heat_maps(variance_heat_maps, ensemble_size)
         else:
             depth_pred = depth_preds
+            variance_heat_map = variance_heat_maps
             pred_uncert = None
 
         # ----------------- Post processing -----------------
@@ -270,9 +278,22 @@ class MarigoldPipeline(DiffusionPipeline):
         else:
             depth_colored_img = None
 
+        color_variance = color_map
+        if color_variance is not None:
+            variance_heat_colored = colorize_depth_maps(
+                variance_heat_map, 0, 1, cmap=color_map
+            ).squeeze()  # [3, H, W], value in (0, 1)
+            variance_heat_colored = (variance_heat_colored * 255).astype(np.uint8)
+            variance_heat_colored_hwc = chw2hwc(variance_heat_colored)
+            variance_heat_colored_img = Image.fromarray(variance_heat_colored_hwc)
+        else:
+            variance_heat_colored_img = None
+        
         return MarigoldDepthOutput(
             depth_np=depth_pred,
             depth_colored=depth_colored_img,
+            variance_heat_map=variance_heat_map,
+            variance_heat_colored_img=variance_heat_colored_img,
             uncertainty=pred_uncert,
         )
 
@@ -373,6 +394,11 @@ class MarigoldPipeline(DiffusionPipeline):
         else:
             iterable = enumerate(timesteps)
 
+        pre_depth = None
+        now_depth = None
+        cumulative_diff_map = None
+        is_first_iter = True
+        
         for i, t in iterable:
             unet_input = torch.cat(
                 [rgb_latent, depth_latent], dim=1
@@ -387,15 +413,33 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_latent = self.scheduler.step(
                 noise_pred, t, depth_latent, generator=rand_num_generator
             ).prev_sample
+            
+            now_depth = self.decode_depth(depth_latent)
+            if is_first_iter is False:
+                diff_map = torch.abs(pre_depth - now_depth)
+                cumulative_diff_map += diff_map
+            else:
+                cumulative_diff_map = torch.zeros_like(now_depth)
 
+            pre_depth = now_depth.clone()
+            is_first_iter = False
+
+        del pre_depth
+        del now_depth
         depth = self.decode_depth(depth_latent)
+
+        # Normalize the heat map
+        min_value = cumulative_diff_map.min()
+        max_value = cumulative_diff_map.max()
+        max_value = torch.max(max_value, min_value )
+        cumulative_diff_map = (cumulative_diff_map - min_value) / (max_value - min_value + 1e-5)
 
         # clip prediction
         depth = torch.clip(depth, -1.0, 1.0)
         # shift to [0, 1]
         depth = (depth + 1.0) / 2.0
 
-        return depth
+        return depth, cumulative_diff_map
 
     def encode_rgb(self, rgb_in: torch.Tensor) -> torch.Tensor:
         """

@@ -104,6 +104,14 @@ if "__main__" == __name__:
         default="Spectral",
         help="Colormap used to render depth predictions.",
     )
+    
+    # variance heat map colormap
+    parser.add_argument(
+        "--color_variance",
+        type=str,
+        default="Spectral",
+        help="Colormap used to render depth predictions.",
+    )
 
     # other settings
     parser.add_argument(
@@ -142,6 +150,7 @@ if "__main__" == __name__:
     resample_method = args.resample_method
 
     color_map = args.color_map
+    color_variance = args.color_variance
     seed = args.seed
     batch_size = args.batch_size
     apple_silicon = args.apple_silicon
@@ -248,6 +257,7 @@ if "__main__" == __name__:
                 match_input_res=match_input_res,
                 batch_size=batch_size,
                 color_map=color_map,
+                color_variance=color_variance,
                 show_progress_bar=True,
                 resample_method=resample_method,
                 seed=seed,
@@ -256,6 +266,9 @@ if "__main__" == __name__:
             depth_pred: np.ndarray = pipe_out.depth_np
             depth_colored: Image.Image = pipe_out.depth_colored
 
+            variance_heat_map: np.ndarray = pipe_out.depth_np
+            variance_heat_colored: Image.Image = pipe_out.depth_colored
+            
             # Save as npy
             dir_name = rgb_path.split('/')[5]
             rgb_name_base = dir_name + '_' + os.path.splitext(os.path.basename(rgb_path))[0]
@@ -264,6 +277,11 @@ if "__main__" == __name__:
             if os.path.exists(npy_save_path):
                 logging.warning(f"Existing file: '{npy_save_path}' will be overwritten")
             np.save(npy_save_path, depth_pred)
+            
+            npy_save_path = os.path.join(output_dir_npy, f"{pred_name_base}_variance.npy")
+            if os.path.exists(npy_save_path):
+                logging.warning(f"Existing file: '{npy_save_path}' will be overwritten")
+            np.save(npy_save_path, variance_heat_map)
 
             # Save as 16-bit uint png
             depth_to_save = (depth_pred * 65535.0).astype(np.uint16)
@@ -281,3 +299,12 @@ if "__main__" == __name__:
                     f"Existing file: '{colored_save_path}' will be overwritten"
                 )
             depth_colored.save(colored_save_path)
+            
+            colored_save_path = os.path.join(
+                output_dir_color, f"{pred_name_base}_variance_colored.png"
+            )
+            if os.path.exists(colored_save_path):
+                logging.warning(
+                    f"Existing file: '{colored_save_path}' will be overwritten"
+                )
+            variance_heat_colored.save(colored_save_path)

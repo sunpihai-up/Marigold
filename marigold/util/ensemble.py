@@ -130,3 +130,14 @@ def ensemble_depths(
     uncertainty /= _max - _min
 
     return aligned_images, uncertainty
+
+def ensemble_variance_heat_maps(variance_heat_maps, max_iter: int = 2):
+    
+    # 将输入张量重塑为形状为 (batch, size, h, w) 的四维张量
+    batch_size = variance_heat_maps.shape[0] // max_iter
+    reshaped_tensor = variance_heat_maps.reshape(batch_size, max_iter, *variance_heat_maps.shape[1:])
+    
+    # 沿着第二个维度求平均值
+    # mean_tensor = torch.mean(reshaped_tensor, dim=1)
+    
+    return torch.mean(reshaped_tensor, dim=1)
