@@ -19,6 +19,7 @@
 
 
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
@@ -115,3 +116,15 @@ def get_pil_resample_method(method_str: str) -> Resampling:
         raise ValueError(f"Unknown resampling method: {resample_method}")
     else:
         return resample_method
+
+def convert_numpy2image_pil(arr):
+    # Normalize the image and convert it to uint8
+    normalized_img = np.array(arr, dtype=np.float32)
+    normalized_img = (normalized_img - normalized_img.min()) / (normalized_img.max() - normalized_img.min()) * 255.0
+    normalized_img = normalized_img.astype(np.uint8)
+
+    # Apply a color map similar to cv2.COLORMAP_INFERNO using the colormap module
+    inferno_cm = plt.get_cmap('inferno')
+    inferno_img = inferno_cm(normalized_img)[:, :, :3]  # Keep only RGB channels
+
+    return Image.fromarray((inferno_img * 255).astype(np.uint8))

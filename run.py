@@ -266,8 +266,8 @@ if "__main__" == __name__:
             depth_pred: np.ndarray = pipe_out.depth_np
             depth_colored: Image.Image = pipe_out.depth_colored
 
-            variance_heat_map: np.ndarray = pipe_out.depth_np
-            variance_heat_colored: Image.Image = pipe_out.depth_colored
+            variance_heat_map: np.ndarray = pipe_out.variance_heat_map
+            variance_heat_colored: Image.Image = pipe_out.variance_heat_colored
             
             # Save as npy
             dir_name = rgb_path.split('/')[5]

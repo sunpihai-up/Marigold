@@ -44,6 +44,7 @@ from .util.image_util import (
     colorize_depth_maps,
     get_pil_resample_method,
     resize_max_res,
+    convert_numpy2image_pil
 )
 
 
@@ -123,6 +124,7 @@ class MarigoldPipeline(DiffusionPipeline):
         batch_size: int = 0,
         seed: Union[int, None] = None,
         color_map: str = "Spectral",
+        color_variance: str = "Spectral",
         show_progress_bar: bool = True,
         ensemble_kwargs: Dict = None,
     ) -> MarigoldDepthOutput:
@@ -235,7 +237,7 @@ class MarigoldPipeline(DiffusionPipeline):
             variance_heat_map_ls.append(variance_heat_map.detach())
         
         depth_preds = torch.concat(depth_pred_ls, dim=0).squeeze()
-        variance_heat_maps = torch.concat(variance_heat_maps, dim=0).squeeze()
+        variance_heat_maps = torch.concat(variance_heat_map_ls, dim=0).squeeze()
         torch.cuda.empty_cache()  # clear vram cache for ensembling
 
         # ----------------- Test-time ensembling -----------------
@@ -243,7 +245,7 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_pred, pred_uncert = ensemble_depths(
                 depth_preds, **(ensemble_kwargs or {})
             )
-            variance_heat_map = ensemble_variance_heat_maps(variance_heat_maps, ensemble_size)
+            variance_heat_map = ensemble_variance_heat_maps(variance_heat_maps, ensemble_size).squeeze()
         else:
             depth_pred = depth_preds
             variance_heat_map = variance_heat_maps
@@ -257,12 +259,17 @@ class MarigoldPipeline(DiffusionPipeline):
 
         # Convert to numpy
         depth_pred = depth_pred.cpu().numpy().astype(np.float32)
-
+        variance_heat_map = variance_heat_map.cpu().numpy().astype(np.float32)
+        
         # Resize back to original resolution
         if match_input_res:
             pred_img = Image.fromarray(depth_pred)
             pred_img = pred_img.resize(input_size, resample=resample_method)
             depth_pred = np.asarray(pred_img)
+            
+            variance_heat_img = Image.fromarray(variance_heat_map)
+            variance_heat_img = variance_heat_img.resize(input_size, resample=resample_method)
+            variance_heat_map = np.asarray(variance_heat_img)
 
         # Clip output range
         depth_pred = depth_pred.clip(0, 1)
@@ -278,14 +285,14 @@ class MarigoldPipeline(DiffusionPipeline):
         else:
             depth_colored_img = None
 
-        color_variance = color_map
         if color_variance is not None:
-            variance_heat_colored = colorize_depth_maps(
-                variance_heat_map, 0, 1, cmap=color_map
-            ).squeeze()  # [3, H, W], value in (0, 1)
-            variance_heat_colored = (variance_heat_colored * 255).astype(np.uint8)
-            variance_heat_colored_hwc = chw2hwc(variance_heat_colored)
-            variance_heat_colored_img = Image.fromarray(variance_heat_colored_hwc)
+            # variance_heat_colored = colorize_depth_maps(
+            #     variance_heat_map, 0, 1, cmap=color_map
+            # ).squeeze()  # [3, H, W], value in (0, 1)
+            # variance_heat_colored = (variance_heat_colored * 255).astype(np.uint8)
+            # variance_heat_colored_hwc = chw2hwc(variance_heat_colored)
+            # variance_heat_colored_img = Image.fromarray(variance_heat_colored_hwc)
+            variance_heat_colored_img = convert_numpy2image_pil(variance_heat_map)
         else:
             variance_heat_colored_img = None
         
@@ -293,7 +300,7 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_np=depth_pred,
             depth_colored=depth_colored_img,
             variance_heat_map=variance_heat_map,
-            variance_heat_colored_img=variance_heat_colored_img,
+            variance_heat_colored=variance_heat_colored_img,
             uncertainty=pred_uncert,
         )
 
@@ -432,7 +439,7 @@ class MarigoldPipeline(DiffusionPipeline):
         min_value = cumulative_diff_map.min()
         max_value = cumulative_diff_map.max()
         max_value = torch.max(max_value, min_value )
-        cumulative_diff_map = (cumulative_diff_map - min_value) / (max_value - min_value + 1e-5)
+        cumulative_diff_map = (cumulative_diff_map - min_value) / (max_value - min_value)
 
         # clip prediction
         depth = torch.clip(depth, -1.0, 1.0)
