@@ -1,9 +1,10 @@
 python run.py \
     --checkpoint /data_nvme/Depth-Estimation/marigold/checkpoints/marigold-v1-0 \
-    --denoise_steps 10 \
+    --denoise_steps 50 \
     --ensemble_size 10 \
     --input_rgb_dir /data_nvme/Depth-Estimation/booster/train/split_00.txt \
-    --output_dir /data_nvme/Depth-Estimation/marigold/output/train_mono \
+    --output_dir ./testt
+    # --output_dir /data_nvme/Depth-Estimation/marigold/output/train_mono \
     # --denoise_variance
 
 # 159 images

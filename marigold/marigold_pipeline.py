@@ -32,8 +32,9 @@ from diffusers import (
 )
 from diffusers.utils import BaseOutput
 from PIL import Image
-from PIL.Image import Resampling
 from torch.utils.data import DataLoader, TensorDataset
+from torchvision.transforms.functional import resize, pil_to_tensor
+from torchvision.transforms import InterpolationMode
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -42,7 +43,7 @@ from .util.ensemble import ensemble_depths, ensemble_variance_heat_maps
 from .util.image_util import (
     chw2hwc,
     colorize_depth_maps,
-    get_pil_resample_method,
+    get_tv_resample_method,
     resize_max_res,
     convert_numpy2image_pil
 )
@@ -114,7 +115,7 @@ class MarigoldPipeline(DiffusionPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        input_image: Image,
+        input_image: Union[Image.Image, torch.Tensor],
         denoising_steps: int = 10,
         ensemble_size: int = 10,
         processing_res: int = 768,
@@ -164,36 +165,46 @@ class MarigoldPipeline(DiffusionPipeline):
             - **uncertainty** (`None` or `np.ndarray`) Uncalibrated uncertainty(MAD, median absolute deviation)
                     coming from ensembling. None if `ensemble_size = 1`
         """
-        input_size = input_image.size
-
-        if not match_input_res:
+        
+        if match_input_res is True:
             assert (
-                processing_res is not None
-            ), "Value error: `resize_output_back` is only valid with "
+                processing_res > 0
+            ), "Value error: `match_input_res` is only valid when `processing_res` > 0."
         assert processing_res >= 0
         assert ensemble_size >= 1
 
         # Check if denoising step is reasonable
         self._check_inference_step(denoising_steps)
 
-        resample_method: Resampling = get_pil_resample_method(resample_method)
+        # resample_method: Resampling = get_pil_resample_method(resample_method)
+        resample_method: InterpolationMode = get_tv_resample_method(resample_method)
 
         # ----------------- Image Preprocess -----------------
+        # Convert to torch tensor
+        if isinstance(input_image, Image.Image):
+            input_image = input_image.convert("RGB")
+            # convert to torch tensor [H, W, rgb] -> [rgb, H, W]
+            rgb = pil_to_tensor(input_image)
+        elif isinstance(input_image, torch.Tensor):
+            rgb = input_image.squeeze()
+        else:
+            raise TypeError(f"Unknown input type: {type(input_image) = }")
+        input_size = rgb.shape
+        assert (
+            rgb.dim() == 3 == input_size[0]
+        ), f"Wrong input shape {input_size}, expected [rgb, H, W]"
+
         # Resize image
         if processing_res > 0:
-            input_image = resize_max_res(
-                input_image,
+            rgb = resize_max_res(
+                rgb,
                 max_edge_resolution=processing_res,
                 resample_method=resample_method,
             )
-        # Convert the image to RGB, to 1.remove the alpha channel 2.convert B&W to 3-channel
-        input_image = input_image.convert("RGB")
-        image = np.asarray(input_image)
 
         # Normalize rgb values
-        rgb = np.transpose(image, (2, 0, 1))  # [H, W, rgb] -> [rgb, H, W]
-        rgb_norm = rgb / 255.0 * 2.0 - 1.0  #  [0, 255] -> [-1, 1]
-        rgb_norm = torch.from_numpy(rgb_norm).to(self.dtype)
+        rgb_norm: torch.Tensor = rgb / 255.0 * 2.0 - 1.0  #  [0, 255] -> [-1, 1]
+        rgb_norm = rgb_norm.to(self.dtype)
         assert rgb_norm.min() >= -1.0 and rgb_norm.max() <= 1.0
 
         # ----------------- Predicting depth -----------------
@@ -234,7 +245,7 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_pred_ls.append(depth_pred_raw.detach())
             if denoise_variance:
                 variance_heat_map_ls.append(variance_heat_map.detach())
-        
+
         depth_preds = torch.concat(depth_pred_ls, dim=0).squeeze()
         if denoise_variance:
             variance_heat_maps = torch.concat(variance_heat_map_ls, dim=0).squeeze()
@@ -259,29 +270,37 @@ class MarigoldPipeline(DiffusionPipeline):
         max_d = torch.max(depth_pred)
         depth_pred = (depth_pred - min_d) / (max_d - min_d)
 
+        # Resize back to original resolution
+        if match_input_res:
+            depth_pred = resize(
+                depth_pred.unsqueeze(0),
+                input_size[1:],
+                interpolation=resample_method,
+                antialias=True,
+            ).squeeze()
+            pred_uncert = resize(
+                pred_uncert.unsqueeze(0),
+                input_size[1:],
+                interpolation=resample_method,
+                antialias=True,
+            ).squeeze()
+
+            if denoise_variance:
+                variance_heat_map = resize(
+                    variance_heat_map.unsqueeze(0),
+                    input_size[1:],
+                    interpolation=resample_method,
+                    antialias=True,
+                ).squeeze()
+
         # Convert to numpy
         depth_pred = depth_pred.cpu().numpy().astype(np.float32)
         pred_uncert = pred_uncert.cpu().numpy().astype(np.float32)
-        
+
         if denoise_variance:
             variance_heat_map = variance_heat_map.cpu().numpy().astype(np.float32)
         else:
             variance_heat_map = None
-        
-        # Resize back to original resolution
-        if match_input_res:
-            pred_img = Image.fromarray(depth_pred)
-            pred_img = pred_img.resize(input_size, resample=resample_method)
-            depth_pred = np.asarray(pred_img)
-            
-            pred_uncert_img = Image.fromarray(pred_uncert)
-            pred_uncert_img = pred_uncert_img.resize(input_size, resample=resample_method)
-            pred_uncert = np.asarray(pred_uncert_img)
-            
-            if denoise_variance:
-                variance_heat_img = Image.fromarray(variance_heat_map)
-                variance_heat_img = variance_heat_img.resize(input_size, resample=resample_method)
-                variance_heat_map = np.asarray(variance_heat_img)
 
         # Clip output range
         depth_pred = depth_pred.clip(0, 1)
@@ -296,7 +315,7 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_colored_img = Image.fromarray(depth_colored_hwc)
         else:
             depth_colored_img = None
-        
+
         return MarigoldDepthOutput(
             depth_np=depth_pred,
             depth_colored=depth_colored_img,
