@@ -106,16 +106,11 @@ if "__main__" == __name__:
     )
     
     # variance heat map colormap
-    # parser.add_argument(
-    #     "--color_variance",
-    #     type=str,
-    #     default="Spectral",
-    #     help="Colormap used to render depth predictions.",
-    # )
     parser.add_argument(
-        "--denoise_variance",
-        action="store_true",
-        help="Calculate the variance between denoising steps.",
+        "--color_variance",
+        type=str,
+        default="Spectral",
+        help="Colormap used to render depth predictions.",
     )
 
     # other settings
@@ -138,6 +133,16 @@ if "__main__" == __name__:
         help="Flag of running on Apple Silicon.",
     )
 
+    # Settings for depth4tom
+    parser.add_argument(
+        "--mask_path",
+        help="Flag of running on Apple Silicon.",
+    )
+    parser.add_argument(
+        "--color_num",
+        action="store_true",
+        help="Flag of running on Apple Silicon.",
+    )
     args = parser.parse_args()
 
     checkpoint_path = args.checkpoint
@@ -155,7 +160,7 @@ if "__main__" == __name__:
     resample_method = args.resample_method
 
     color_map = args.color_map
-    denoise_variance = args.denoise_variance
+    color_variance = args.color_variance
     seed = args.seed
     batch_size = args.batch_size
     apple_silicon = args.apple_silicon
@@ -175,18 +180,10 @@ if "__main__" == __name__:
     output_dir_color = os.path.join(output_dir, "depth_colored")
     output_dir_tif = os.path.join(output_dir, "depth_bw")
     output_dir_npy = os.path.join(output_dir, "depth_npy")
-    output_dir_uncertainty_npy = os.path.join(output_dir, "uncertainty_npy")
-    
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(output_dir_color, exist_ok=True)
     os.makedirs(output_dir_tif, exist_ok=True)
     os.makedirs(output_dir_npy, exist_ok=True)
-    os.makedirs(output_dir_uncertainty_npy, exist_ok=True)
-    
-    if denoise_variance:
-        output_dir_variance_npy = os.path.join(output_dir, "variance_npy")
-        os.makedirs(output_dir_variance_npy, exist_ok=True)
-    
     logging.info(f"output dir = {output_dir}")
 
     # -------------------- Device --------------------
@@ -270,7 +267,7 @@ if "__main__" == __name__:
                 match_input_res=match_input_res,
                 batch_size=batch_size,
                 color_map=color_map,
-                denoise_variance=denoise_variance,
+                color_variance=color_variance,
                 show_progress_bar=True,
                 resample_method=resample_method,
                 seed=seed,
@@ -278,38 +275,24 @@ if "__main__" == __name__:
 
             depth_pred: np.ndarray = pipe_out.depth_np
             depth_colored: Image.Image = pipe_out.depth_colored
-            # Uncertainty map between ensemble
-            uncertainty_map: np.ndarray = pipe_out.uncertainty
 
-            if denoise_variance:
-                variance_heat_map: np.ndarray = pipe_out.variance_heat_map
+            variance_heat_map: np.ndarray = pipe_out.variance_heat_map
+            variance_heat_colored: Image.Image = pipe_out.variance_heat_colored
             
-            
-            # TODO: 保存名称加上摄像机编号
             # Save as npy
             dir_name = rgb_path.split('/')[5]
             rgb_name_base = dir_name + '_' + os.path.splitext(os.path.basename(rgb_path))[0]
             pred_name_base = rgb_name_base + "_pred"
-            
-            # Depth Map
             npy_save_path = os.path.join(output_dir_npy, f"{pred_name_base}.npy")
             if os.path.exists(npy_save_path):
                 logging.warning(f"Existing file: '{npy_save_path}' will be overwritten")
             np.save(npy_save_path, depth_pred)
             
-            # Uncertainty Map
-            npy_save_path = os.path.join(output_dir_uncertainty_npy, f"{pred_name_base}_uncertainty.npy")
+            npy_save_path = os.path.join(output_dir_npy, f"{pred_name_base}_variance.npy")
             if os.path.exists(npy_save_path):
                 logging.warning(f"Existing file: '{npy_save_path}' will be overwritten")
-            np.save(npy_save_path, uncertainty_map)
+            np.save(npy_save_path, variance_heat_map)
 
-            # Variance Map
-            if denoise_variance:
-                npy_save_path = os.path.join(output_dir_variance_npy, f"{pred_name_base}_variance.npy")
-                if os.path.exists(npy_save_path):
-                    logging.warning(f"Existing file: '{npy_save_path}' will be overwritten")
-                np.save(npy_save_path, variance_heat_map)
-            
             # Save as 16-bit uint png
             depth_to_save = (depth_pred * 65535.0).astype(np.uint16)
             png_save_path = os.path.join(output_dir_tif, f"{pred_name_base}.png")
@@ -317,7 +300,7 @@ if "__main__" == __name__:
                 logging.warning(f"Existing file: '{png_save_path}' will be overwritten")
             Image.fromarray(depth_to_save).save(png_save_path, mode="I;16")
 
-            # Colorize Depth
+            # Colorize
             colored_save_path = os.path.join(
                 output_dir_color, f"{pred_name_base}_colored.png"
             )
@@ -326,3 +309,12 @@ if "__main__" == __name__:
                     f"Existing file: '{colored_save_path}' will be overwritten"
                 )
             depth_colored.save(colored_save_path)
+            
+            colored_save_path = os.path.join(
+                output_dir_color, f"{pred_name_base}_variance_colored.png"
+            )
+            if os.path.exists(colored_save_path):
+                logging.warning(
+                    f"Existing file: '{colored_save_path}' will be overwritten"
+                )
+            variance_heat_colored.save(colored_save_path)

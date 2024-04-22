@@ -64,7 +64,6 @@ class MarigoldDepthOutput(BaseOutput):
     depth_np: np.ndarray
     depth_colored: Union[None, Image.Image]
     variance_heat_map: Union[None, np.ndarray]
-    variance_heat_colored: Union[None, Image.Image]
     uncertainty: Union[None, np.ndarray]
 
 
@@ -125,6 +124,7 @@ class MarigoldPipeline(DiffusionPipeline):
         seed: Union[int, None] = None,
         color_map: str = "Spectral",
         color_variance: str = "Spectral",
+        denoise_variance: bool = False,
         show_progress_bar: bool = True,
         ensemble_kwargs: Dict = None,
     ) -> MarigoldDepthOutput:
@@ -229,12 +229,15 @@ class MarigoldPipeline(DiffusionPipeline):
                 num_inference_steps=denoising_steps,
                 show_pbar=show_progress_bar,
                 seed=seed,
+                denoise_variance=denoise_variance
             )
             depth_pred_ls.append(depth_pred_raw.detach())
-            variance_heat_map_ls.append(variance_heat_map.detach())
+            if denoise_variance:
+                variance_heat_map_ls.append(variance_heat_map.detach())
         
         depth_preds = torch.concat(depth_pred_ls, dim=0).squeeze()
-        variance_heat_maps = torch.concat(variance_heat_map_ls, dim=0).squeeze()
+        if denoise_variance:
+            variance_heat_maps = torch.concat(variance_heat_map_ls, dim=0).squeeze()
         torch.cuda.empty_cache()  # clear vram cache for ensembling
 
         # ----------------- Test-time ensembling -----------------
@@ -242,10 +245,12 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_pred, pred_uncert = ensemble_depths(
                 depth_preds, **(ensemble_kwargs or {})
             )
-            variance_heat_map = ensemble_variance_heat_maps(variance_heat_maps, ensemble_size).squeeze()
+            if denoise_variance:
+                variance_heat_map = ensemble_variance_heat_maps(variance_heat_maps, ensemble_size).squeeze()
         else:
             depth_pred = depth_preds
-            variance_heat_map = variance_heat_maps
+            if denoise_variance:
+                variance_heat_map = variance_heat_maps
             pred_uncert = None
 
         # ----------------- Post processing -----------------
@@ -256,7 +261,12 @@ class MarigoldPipeline(DiffusionPipeline):
 
         # Convert to numpy
         depth_pred = depth_pred.cpu().numpy().astype(np.float32)
-        variance_heat_map = variance_heat_map.cpu().numpy().astype(np.float32)
+        pred_uncert = pred_uncert.cpu().numpy().astype(np.float32)
+        
+        if denoise_variance:
+            variance_heat_map = variance_heat_map.cpu().numpy().astype(np.float32)
+        else:
+            variance_heat_map = None
         
         # Resize back to original resolution
         if match_input_res:
@@ -264,9 +274,14 @@ class MarigoldPipeline(DiffusionPipeline):
             pred_img = pred_img.resize(input_size, resample=resample_method)
             depth_pred = np.asarray(pred_img)
             
-            variance_heat_img = Image.fromarray(variance_heat_map)
-            variance_heat_img = variance_heat_img.resize(input_size, resample=resample_method)
-            variance_heat_map = np.asarray(variance_heat_img)
+            pred_uncert_img = Image.fromarray(pred_uncert)
+            pred_uncert_img = pred_uncert_img.resize(input_size, resample=resample_method)
+            pred_uncert = np.asarray(pred_uncert_img)
+            
+            if denoise_variance:
+                variance_heat_img = Image.fromarray(variance_heat_map)
+                variance_heat_img = variance_heat_img.resize(input_size, resample=resample_method)
+                variance_heat_map = np.asarray(variance_heat_img)
 
         # Clip output range
         depth_pred = depth_pred.clip(0, 1)
@@ -281,23 +296,11 @@ class MarigoldPipeline(DiffusionPipeline):
             depth_colored_img = Image.fromarray(depth_colored_hwc)
         else:
             depth_colored_img = None
-
-        if color_variance is not None:
-            # variance_heat_colored = colorize_depth_maps(
-            #     variance_heat_map, 0, 1, cmap=color_map
-            # ).squeeze()  # [3, H, W], value in (0, 1)
-            # variance_heat_colored = (variance_heat_colored * 255).astype(np.uint8)
-            # variance_heat_colored_hwc = chw2hwc(variance_heat_colored)
-            # variance_heat_colored_img = Image.fromarray(variance_heat_colored_hwc)
-            variance_heat_colored_img = convert_numpy2image_pil(variance_heat_map)
-        else:
-            variance_heat_colored_img = None
         
         return MarigoldDepthOutput(
             depth_np=depth_pred,
             depth_colored=depth_colored_img,
             variance_heat_map=variance_heat_map,
-            variance_heat_colored=variance_heat_colored_img,
             uncertainty=pred_uncert,
         )
 
@@ -344,6 +347,7 @@ class MarigoldPipeline(DiffusionPipeline):
         num_inference_steps: int,
         seed: Union[int, None],
         show_pbar: bool,
+        denoise_variance: bool
     ) -> torch.Tensor:
         """
         Perform an individual depth prediction without ensembling.
@@ -399,10 +403,11 @@ class MarigoldPipeline(DiffusionPipeline):
         else:
             iterable = enumerate(timesteps)
 
-        pre_depth = None
-        now_depth = None
         cumulative_diff_map = None
-        is_first_iter = True
+        if denoise_variance:
+            pre_depth = None
+            now_depth = None
+            is_first_iter = True
         
         for i, t in iterable:
             unet_input = torch.cat(
@@ -419,25 +424,27 @@ class MarigoldPipeline(DiffusionPipeline):
                 noise_pred, t, depth_latent, generator=rand_num_generator
             ).prev_sample
             
-            now_depth = self.decode_depth(depth_latent)
-            if is_first_iter is False:
-                diff_map = torch.abs(pre_depth - now_depth)
-                cumulative_diff_map += diff_map
-            else:
-                cumulative_diff_map = torch.zeros_like(now_depth)
+            if denoise_variance:
+                now_depth = self.decode_depth(depth_latent)
+                if is_first_iter is False:
+                    diff_map = torch.abs(pre_depth - now_depth)
+                    cumulative_diff_map += diff_map
+                else:
+                    cumulative_diff_map = torch.zeros_like(now_depth)
 
-            pre_depth = now_depth.clone()
-            is_first_iter = False
+                pre_depth = now_depth.clone()
+                is_first_iter = False
 
-        del pre_depth
-        del now_depth
         depth = self.decode_depth(depth_latent)
+        if denoise_variance:
+            del pre_depth
+            del now_depth
 
-        # Normalize the heat map
-        min_value = cumulative_diff_map.min()
-        max_value = cumulative_diff_map.max()
-        max_value = torch.max(max_value, min_value )
-        cumulative_diff_map = (cumulative_diff_map - min_value) / (max_value - min_value)
+            # Normalize the heat map
+            min_value = cumulative_diff_map.min()
+            max_value = cumulative_diff_map.max()
+            max_value = torch.max(max_value, min_value )
+            cumulative_diff_map = (cumulative_diff_map - min_value) / (max_value - min_value)
 
         # clip prediction
         depth = torch.clip(depth, -1.0, 1.0)
