@@ -112,7 +112,7 @@ def get_tv_resample_method(method_str: str) -> InterpolationMode:
     resample_method_dict = {
         "bilinear": InterpolationMode.BILINEAR,
         "bicubic": InterpolationMode.BICUBIC,
-        "nearest": InterpolationMode.NEAREST,
+        "nearest": InterpolationMode.NEAREST_EXACT,
     }
     resample_method = resample_method_dict.get(method_str)
     if resample_method is None:
