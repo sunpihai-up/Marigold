@@ -45,7 +45,6 @@ from .util.image_util import (
     colorize_depth_maps,
     get_tv_resample_method,
     resize_max_res,
-    convert_numpy2image_pil
 )
 
 
@@ -165,10 +164,6 @@ class MarigoldPipeline(DiffusionPipeline):
                     coming from ensembling. None if `ensemble_size = 1`
         """
         
-        if match_input_res is True:
-            assert (
-                processing_res > 0
-            ), "Value error: `match_input_res` is only valid when `processing_res` > 0."
         assert processing_res >= 0
         assert ensemble_size >= 1
 
