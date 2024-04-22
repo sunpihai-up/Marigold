@@ -124,7 +124,6 @@ class MarigoldPipeline(DiffusionPipeline):
         batch_size: int = 0,
         seed: Union[int, None] = None,
         color_map: str = "Spectral",
-        color_variance: str = "Spectral",
         denoise_variance: bool = False,
         show_progress_bar: bool = True,
         ensemble_kwargs: Dict = None,
@@ -402,7 +401,7 @@ class MarigoldPipeline(DiffusionPipeline):
             device=device,
             dtype=self.dtype,
             generator=rand_num_generator,
-        )  # [B, 4, h, w]
+        ).to(device)  # [B, 4, h, w]
 
         # Batched empty text embedding
         if self.empty_text_embed is None:
