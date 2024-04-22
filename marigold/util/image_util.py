@@ -22,7 +22,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from PIL import Image
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize
 
@@ -121,14 +120,14 @@ def get_tv_resample_method(method_str: str) -> InterpolationMode:
     else:
         return resample_method
 
-def convert_numpy2image_pil(arr):
-    # Normalize the image and convert it to uint8
-    normalized_img = np.array(arr, dtype=np.float32)
-    normalized_img = (normalized_img - normalized_img.min()) / (normalized_img.max() - normalized_img.min()) * 255.0
-    normalized_img = normalized_img.astype(np.uint8)
+# def convert_numpy2image_pil(arr):
+#     # Normalize the image and convert it to uint8
+#     normalized_img = np.array(arr, dtype=np.float32)
+#     normalized_img = (normalized_img - normalized_img.min()) / (normalized_img.max() - normalized_img.min()) * 255.0
+#     normalized_img = normalized_img.astype(np.uint8)
 
-    # Apply a color map similar to cv2.COLORMAP_INFERNO using the colormap module
-    inferno_cm = plt.get_cmap('inferno')
-    inferno_img = inferno_cm(normalized_img)[:, :, :3]  # Keep only RGB channels
+#     # Apply a color map similar to cv2.COLORMAP_INFERNO using the colormap module
+#     inferno_cm = plt.get_cmap('inferno')
+#     inferno_img = inferno_cm(normalized_img)[:, :, :3]  # Keep only RGB channels
 
-    return Image.fromarray((inferno_img * 255).astype(np.uint8))
+#     return Image.fromarray((inferno_img * 255).astype(np.uint8))
