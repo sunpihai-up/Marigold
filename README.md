@@ -1,6 +1,6 @@
 # Marigold: Repurposing Diffusion-Based Image Generators for Monocular Depth Estimation
 
-**CVPR 2024**
+**CVPR 2024 (Oral)**
 
 This repository represents the official implementation of the paper titled "Repurposing Diffusion-Based Image Generators for Monocular Depth Estimation".
 
@@ -203,7 +203,7 @@ python run.py \
 Install additional dependencies:
 
 ```bash
-pip install -r requirements+.txt
+pip install -r requirements+.txt -r requirements.txt
 ```
 
 Set data directory variable (also needed in evaluation scripts) and download [evaluation datasets](https://share.phys.ethz.ch/~pf/bingkedata/marigold/evaluation_dataset) into corresponding subfolders:

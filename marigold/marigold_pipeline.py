@@ -163,14 +163,12 @@ class MarigoldPipeline(DiffusionPipeline):
             - **uncertainty** (`None` or `np.ndarray`) Uncalibrated uncertainty(MAD, median absolute deviation)
                     coming from ensembling. None if `ensemble_size = 1`
         """
-        
         assert processing_res >= 0
         assert ensemble_size >= 1
 
         # Check if denoising step is reasonable
         self._check_inference_step(denoising_steps)
 
-        # resample_method: Resampling = get_pil_resample_method(resample_method)
         resample_method: InterpolationMode = get_tv_resample_method(resample_method)
 
         # ----------------- Image Preprocess -----------------
@@ -403,7 +401,7 @@ class MarigoldPipeline(DiffusionPipeline):
             self.encode_empty_text()
         batch_empty_text_embed = self.empty_text_embed.repeat(
             (rgb_latent.shape[0], 1, 1)
-        )  # [B, 2, 1024]
+        ).to(device)  # [B, 2, 1024]
 
         # Denoising loop
         if show_pbar:
