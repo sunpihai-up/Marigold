@@ -105,13 +105,6 @@ if "__main__" == __name__:
         help="Colormap used to render depth predictions.",
     )
     
-    # variance heat map colormap
-    # parser.add_argument(
-    #     "--color_variance",
-    #     type=str,
-    #     default="Spectral",
-    #     help="Colormap used to render depth predictions.",
-    # )
     parser.add_argument(
         "--denoise_variance",
         action="store_true",
